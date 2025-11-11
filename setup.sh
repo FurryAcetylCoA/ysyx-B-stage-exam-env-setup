@@ -148,8 +148,14 @@ setup_env() {
 }
 
 setup_repo() {
-    # clone repo
-    retry_run git clone --depth 1 -b $1 ${GITHUB_YSYX_B_STAGE_CI_REPO} ysyx-workbench
+	if [ -d "ysyx-workbench" ]; then
+		error "Directory 'ysyx-workbench' already exists in $(pwd)."
+		info "If you want to re-clone, please remove or move this directory first."
+		exit 1
+	fi
+
+	# clone repo
+	retry_run git clone --depth 1 -b $1 ${GITHUB_YSYX_B_STAGE_CI_REPO} ysyx-workbench
 
     # record last two commits (hash, date, subject) from the student's repo
     LOG="$(git -C ysyx-workbench log -n 2 --pretty=format:'%h %ad %s' --date=iso 2>/dev/null || true)"
