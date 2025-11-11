@@ -25,6 +25,13 @@ printf '%b' "${WHITE_ON_BLACK}"
 # restore colors on exit
 trap 'printf "%b" "${NC}"' EXIT
 
+# Only use sudo when not running as root, since Ubuntu base images does not have sudo installed
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 retry_run() {
     local cmd=("$@")
     local retries=3
@@ -96,24 +103,24 @@ check_git_config() {
 
 setup_env() {
     # apt update & upgrade
-    retry_run sudo apt update
-    retry_run sudo apt upgrade -y
+    retry_run $SUDO apt update
+    retry_run $SUDO apt upgrade -y
 
     # git check
     if ! command -v git &> /dev/null; then
-        retry_run sudo apt install -y git
+        retry_run $SUDO apt install -y git
     fi
     # git config check
     check_git_config
 
     # install packages
-    retry_run sudo apt install -y vim wget curl openjdk-17-jdk \
+    retry_run $SUDO apt install -y vim wget curl openjdk-17-jdk \
         gcc g++ gdb make build-essential autoconf scons \
         python-is-python3 help2man perl flex bison ccache \
         libreadline-dev libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev \
         g++-riscv64-linux-gnu llvm llvm-dev
     # fix compile error using riscv64-linux-gnu
-    sudo sed -i 's|^# include <gnu/stubs-ilp32.h>|//# include <gnu/stubs-ilp32.h>|' /usr/riscv64-linux-gnu/include/gnu/stubs.h
+    $SUDO sed -i 's|^# include <gnu/stubs-ilp32.h>|//# include <gnu/stubs-ilp32.h>|' /usr/riscv64-linux-gnu/include/gnu/stubs.h
     # install verilator
     if command -v verilator &> /dev/null; then
         info "Verilator is already installed."
@@ -124,7 +131,7 @@ setup_env() {
         autoconf
         ./configure
         make -j$(nproc)
-        sudo make install
+        $SUDO make install
         cd -
         rm -rf /tmp/verilator
     fi
