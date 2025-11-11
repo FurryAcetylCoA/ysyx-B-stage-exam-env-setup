@@ -223,6 +223,8 @@ clean_repo() {
     make -C $YSYX_HOME/am-kernels clean-all clean
     make -C $YSYX_HOME/npc clean
 
+    pushd .
+
     cd $YSYX_HOME
     git clean -xdf
     rm -rf ./.git
@@ -256,11 +258,51 @@ clean_repo() {
     cd $YSYX_HOME/riscv-arch-test-am
     git clean -xdf
     rm -rf ./.git
+
+    popd
+}
+
+pack_repo() {
+	YSYX_HOME=$(pwd)/ysyx-workbench
+    PLAIN_ARCHIVE="ysyx-workbench.tar.bz2"
+    ENCRYPTED_ARCHIVE="ysyx-b-exam.tar.bz2"
+
+	if [ ! -d "$YSYX_HOME" ]; then
+		error "Directory 'ysyx-workbench' not found in $(pwd). Aborting."
+		exit 1
+	fi
+
+	info "Running pre-pack clean targets..."
+	make -C "$YSYX_HOME/nemu" clean || true
+	make -C "$YSYX_HOME/am-kernels" clean-all clean || true
+	make -C "$YSYX_HOME/npc" clean || true
+
+	# Unencrypted archive. Including .git, for TA refrence
+	info "Creating plain archive: $PLAIN_ARCHIVE"
+    if [ ! -d "${YSYX_HOME}/.git" ]; then
+		error "Directory 'ysyx-workbench' does not contain .git. Aborting."
+		exit 1
+	fi
+	tar cjf "$PLAIN_ARCHIVE" ysyx-workbench
+
+	info "Running clean_repo to strip VCS metadata..."
+	clean_repo
+
+	KEY=$(base64 /dev/random | head -c 16)
+
+	info "Creating encrypted archive: $ENCRYPTED_ARCHIVE"
+	tar cj ysyx-workbench activate.sh bin | openssl aes256 -k "$KEY" > "$ENCRYPTED_ARCHIVE"
+
+	success "Pack completed."
+	info "Plain archive: $GREEN$PLAIN_ARCHIVE"
+	info "Encrypted archive: $GREEN$ENCRYPTED_ARCHIVE"
+	info "Encryption key: $RED$KEY"
+    echo $KEY > ysyx-b-exam-key.txt
 }
 
 if [ -z "$1" ]; then
     error "Error: No argument specified."
-    info "Usage: $0 {env|repo|clean}"
+    info "Usage: $0 {env|repo|pack}"
     exit 1
 fi
 
@@ -273,14 +315,19 @@ case "$1" in
         check_git_config
         setup_repo $2 
         ;;
-    clean)
+#    clean)
+#        sanity_check
+#        check_git_config
+#        clean_repo
+#        ;;
+    pack)
         sanity_check
         check_git_config
-        clean_repo
+        pack_repo
         ;;
     *)
         error "Error: Unknown argument '$1'."
-        info "Usage: $0 {env|repo|clean}"
+        info "Usage: $0 {env|repo|pack}"
         exit 1
         ;;
 esac

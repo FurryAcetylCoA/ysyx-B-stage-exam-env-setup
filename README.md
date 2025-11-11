@@ -50,11 +50,16 @@ source activate.sh
 
 
 ### 4. 打包
-清理当前工作目录下的 `ysyx-workbench`，删除所有编译产物和临时文件（除了 soc verilog），但保留对代码的修改：
+
+在错误注入后，使用打包命令即可打包
 ```
-setup.sh clean
+setup.sh pack
 ```
-完成后，可将目录打包发送。注意：务必保留 `bin/mill` 和 `activate.sh`。
+将生成两个压缩包:
+- `ysyx-workbench.tar.bz2`: 包含VCS记录，不加密。供存档。
+- 供留档使用；`ysyx-b-exam.tar.bz2`: 不包含VCS记录，使用随机产生的密钥加密，发给学员使用。
+完成后，可将目录打包上传到系统中。
+加密密码会输出到屏幕上，同时，也会存储到`ysyx-b-exam-key.txt`中
 由于使用绝对路径，接收者需修改 `activate.sh` 中 `B_EXAM_HOME` 为解压后的目录。
 
 ## 其他注意事项
