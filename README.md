@@ -66,3 +66,9 @@ all_proxy=socks5://127.0.0.1:9080
 JAVA_OPTS="-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=9080 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=9080"
 ```
 此处假设你的代理为 `127.0.0.1:9080`
+
+或如果你有适用于Github的透明代理，可以在运行脚本前设置：
+```
+GITHUB_MIRROR=[你的透明代理]
+```
+

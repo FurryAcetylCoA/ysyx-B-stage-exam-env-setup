@@ -25,6 +25,14 @@ printf '%b' "${WHITE_ON_BLACK}"
 # restore colors on exit
 trap 'printf "%b" "${NC}"' EXIT
 
+# If GITHUB_MIRROR is set, route all GitHub ops via it,
+# then revert the config after this script finishes (success or failure).
+# So the submodule of submodue can also be cloned via the mirror.
+if [ -n "$GITHUB_MIRROR" ]; then
+    git config --global url."${GITHUB_MIRROR}https://github.com/".insteadOf "https://github.com/"
+    trap 'printf "%b" "${NC}";git config --global --unset-all "url.${GITHUB_MIRROR}https://github.com/".insteadOf "https://github.com/"' EXIT
+fi
+
 # Only use sudo when not running as root, since Ubuntu base images does not have sudo installed
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=""
@@ -34,7 +42,7 @@ fi
 
 retry_run() {
     local cmd=("$@")
-    local retries=3
+    local retries=5
     local attempt=1
 
     while [ $attempt -le $retries ]; do
@@ -191,12 +199,12 @@ setup_repo() {
     make -C $YSYX_HOME/rt-thread-am/bsp/abstract-machine init
     # clean up
     make -C $YSYX_HOME/nemu clean
-    make -C $YSYX_HOME/am-kernels clean-all
+    make -C $YSYX_HOME/am-kernels clean-all clean
     make -C $YSYX_HOME/npc clean
     # git clone ssh -> https
-    sed -i -e 's+git@github.com:+https://github.com/+' $YSYX_HOME/ysyxSoC/.gitmodules
-    sed -i -e 's+git@github.com:+https://github.com/+' $YSYX_HOME/nemu/tools/capstone/Makefile || true
-    sed -i -e 's+git@github.com:+https://github.com/+' $YSYX_HOME/nemu/tools/spike-diff/Makefile || true
+    sed -i -e "s+git@github.com:+https://github.com/+" $YSYX_HOME/ysyxSoC/.gitmodules
+    sed -i -e "s+git@github.com:+https://github.com/+" $YSYX_HOME/nemu/tools/capstone/Makefile || true
+    sed -i -e "s+git@github.com:+https://github.com/+" $YSYX_HOME/nemu/tools/spike-diff/Makefile || true
     # install mill
     mkdir -p $YSYX_HOME/../bin
     MILL_VERSION=0.11.13
@@ -204,7 +212,7 @@ setup_repo() {
         MILL_VERSION=`cat $YSYX_HOME/npc/.mill-version`
     fi
     info "Downloading mill with version $MILL_VERSION"
-    retry_run sh -c "curl -L https://github.com/com-lihaoyi/mill/releases/download/$MILL_VERSION/$MILL_VERSION > $YSYX_HOME/../bin/mill"
+    retry_run sh -c "curl -L ${GITHUB_MIRROR}https://github.com/com-lihaoyi/mill/releases/download/$MILL_VERSION/$MILL_VERSION > $YSYX_HOME/../bin/mill"
     chmod +x $YSYX_HOME/../bin/mill
     # generate verilog for ysyxSoC
     PATH=$YSYX_HOME/../bin:$PATH
@@ -219,7 +227,7 @@ clean_repo() {
 
     # Use mutiple ways to clean just in case
     make -C $YSYX_HOME/nemu clean
-    make -C $YSYX_HOME/am-kernels clean-all
+    make -C $YSYX_HOME/am-kernels clean-all clean
     make -C $YSYX_HOME/npc clean
 
     cd $YSYX_HOME
