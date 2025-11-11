@@ -71,33 +71,40 @@ sanity_check() {
     fi
 }
 
+check_git_config() {
+    local name email
+
+    name=$(git config --global user.name 2>/dev/null)
+    email=$(git config --global user.email 2>/dev/null)
+
+    if [ -z "$name" ]; then
+        read -rp "Git user.name is not set. Please enter your name: " name
+        if [ -n "$name" ]; then
+            git config --global user.name "$name"
+            success "Set git user.name to '$name'"
+        fi
+    fi
+
+    if [ -z "$email" ]; then
+        read -rp "Git user.email is not set. Please enter your email: " email
+        if [ -n "$email" ]; then
+            git config --global user.email "$email"
+            success "Set git user.email to '$email'"
+        fi
+    fi
+}
+
 setup_env() {
     # apt update & upgrade
     retry_run sudo apt update
     retry_run sudo apt upgrade -y
 
     # git check
-    if command -v git &> /dev/null; then
-        local user_name
-        user_name=$(git config user.name)
-        if [ -z "$user_name" ]; then
-            error "Error: git user.name not configured."
-            info "Please run 'git config --global user.name \"Your Name\"' to set your name."
-            exit 1
-        fi
-
-        local user_email
-        user_email=$(git config user.email)
-        if [ -z "$user_email" ]; then
-            error "Error: git user.email not configured."
-            info "Please run 'git config --global user.email \"you@example.com\"' to set your email."
-            exit 1
-        fi
-    else
+    if ! command -v git &> /dev/null; then
         retry_run sudo apt install -y git
-        info "Git installed. Please config git user.name and user.email before rerun this script."
-        exit 1
     fi
+    # git config check
+    check_git_config
 
     # install packages
     retry_run sudo apt install -y vim wget curl openjdk-17-jdk \
@@ -238,10 +245,12 @@ case "$1" in
         ;;
     repo)
         sanity_check
+        check_git_config
         setup_repo $2 
         ;;
     clean)
         sanity_check
+        check_git_config
         clean_repo
         ;;
     *)
