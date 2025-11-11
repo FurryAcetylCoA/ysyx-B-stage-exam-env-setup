@@ -125,15 +125,15 @@ setup_env() {
     if command -v verilator &> /dev/null; then
         info "Verilator is already installed."
     else
-        retry_run git clone ${GITEE_MIRROR}/Verilator.git /tmp/verilator
-        cd /tmp/verilator
-        git checkout stable
+        TMPDIR="$(mktemp -d)"
+        retry_run git clone --depth 1 -b stable ${GITEE_MIRROR}/Verilator.git "$TMPDIR"
+        cd $TMPDIR
         autoconf
         ./configure
         make -j$(nproc)
         $SUDO make install
         cd -
-        rm -rf /tmp/verilator
+        rm -rf $TMPDIR
     fi
 
     success "Environment setup completed."
