@@ -4,13 +4,49 @@
 GITEE_MIRROR="https://gitee.com/mirrors"
 GITHUB_YSYX_B_STAGE_CI_REPO="https://github.com/sashimi-yzh/ysyx-submit-test.git"
 
+RED='\e[31m'
+GREEN='\e[32m'
+NC='\e[0m'
+WHITE_ON_BLACK='\e[37;40m'
+
+# helper output functions
+info() {
+    echo -e "${WHITE_ON_BLACK}$*${NC}"
+}
+success() {
+    echo -e "${GREEN}$*${NC}"
+}
+error() {
+    echo -e "${RED}$*${NC}" >&2
+}
+
+# set terminal to plain black background + white
+printf '%b' "${WHITE_ON_BLACK}"
+# restore colors on exit
+trap 'printf "%b" "${NC}"' EXIT
+
+# If GITHUB_MIRROR is set, route all GitHub ops via it,
+# then revert the config after this script finishes (success or failure).
+# So the submodule of submodue can also be cloned via the mirror.
+if [ -n "$GITHUB_MIRROR" ]; then
+    git config --global url."${GITHUB_MIRROR}https://github.com/".insteadOf "https://github.com/"
+    trap 'printf "%b" "${NC}";git config --global --unset-all "url.${GITHUB_MIRROR}https://github.com/".insteadOf "https://github.com/"' EXIT
+fi
+
+# Only use sudo when not running as root, since Ubuntu base images does not have sudo installed
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 retry_run() {
     local cmd=("$@")
-    local retries=3
+    local retries=5
     local attempt=1
 
     while [ $attempt -le $retries ]; do
-        echo "Running command: ${cmd[*]}"
+        info "Running command: ${cmd[*]}"
         "${cmd[@]}"
         local exit_code=$?
 
@@ -19,73 +55,107 @@ retry_run() {
         else
             if [ $attempt -lt $retries ]; then
                 local next_attempt=$((attempt + 1))
-                echo "Command failed, retrying ..."
+                info "Command failed (attempt ${attempt}/${retries}), retrying ..."
             fi
         fi
         attempt=$((attempt + 1))
     done
 
-    echo "Command '${cmd[*]}' failed $retries times, exiting ..."
+    error "Command '${cmd[*]}' failed $retries times, exiting ..."
     exit 1
+}
+
+# Sanity check for required tools
+sanity_check() {
+    local -a cmds=(git wget curl gcc g++ gdb make autoconf scons python3 perl flex bison ccache javac riscv64-linux-gnu-gcc)
+    local missing=()
+
+    for c in "${cmds[@]}"; do
+        if ! command -v "$c" &> /dev/null; then
+            missing+=("$c")
+        fi
+    done
+
+    if [ ${#missing[@]} -ne 0 ]; then
+        error "Sanity check failed. Missing required tools:"
+        for m in "${missing[@]}"; do
+            error "  - $m"
+        done
+        error "Please run '$0 env' to install the required tools and re-run this command."
+        exit 1
+    fi
+}
+
+check_git_config() {
+    local name email
+
+    name=$(git config --global user.name 2>/dev/null)
+    email=$(git config --global user.email 2>/dev/null)
+
+    if [ -z "$name" ]; then
+        read -rp "Git user.name is not set. Please enter your name: " name
+        if [ -n "$name" ]; then
+            git config --global user.name "$name"
+            success "Set git user.name to '$name'"
+        fi
+    fi
+
+    if [ -z "$email" ]; then
+        read -rp "Git user.email is not set. Please enter your email: " email
+        if [ -n "$email" ]; then
+            git config --global user.email "$email"
+            success "Set git user.email to '$email'"
+        fi
+    fi
 }
 
 setup_env() {
     # apt update & upgrade
-    retry_run sudo apt update
-    retry_run sudo apt upgrade -y
+    retry_run $SUDO apt update
+    retry_run $SUDO apt upgrade -y
 
     # git check
-    if command -v git &> /dev/null; then
-        local user_name
-        user_name=$(git config user.name)
-        if [ -z "$user_name" ]; then
-            echo "Error: git user.name not configured." >&2
-            echo "Please run 'git config --global user.name \"Your Name\"' to set your name." >&2
-            exit 1
-        fi
-
-        local user_email
-        user_email=$(git config user.email)
-        if [ -z "$user_email" ]; then
-            echo "Error: git user.email not configured." >&2
-            echo "Please run 'git config --global user.email \"you@example.com\"' to set your email." >&2
-            exit 1
-        fi
-    else
-        retry_run sudo apt install -y git
-        echo "Git installed. Please config git user.name and user.email before rerun this script."
-        exit 1
+    if ! command -v git &> /dev/null; then
+        retry_run $SUDO apt install -y git
     fi
+    # git config check
+    check_git_config
 
     # install packages
-    retry_run sudo apt install -y vim wget curl openjdk-17-jdk \
+    retry_run $SUDO apt install -y vim wget curl openjdk-17-jdk \
         gcc g++ gdb make build-essential autoconf scons \
         python-is-python3 help2man perl flex bison ccache \
         libreadline-dev libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev \
         g++-riscv64-linux-gnu llvm llvm-dev
     # fix compile error using riscv64-linux-gnu
-    sudo sed -i 's|^# include <gnu/stubs-ilp32.h>|//# include <gnu/stubs-ilp32.h>|' /usr/riscv64-linux-gnu/include/gnu/stubs.h
+    $SUDO sed -i 's|^# include <gnu/stubs-ilp32.h>|//# include <gnu/stubs-ilp32.h>|' /usr/riscv64-linux-gnu/include/gnu/stubs.h
     # install verilator
     if command -v verilator &> /dev/null; then
-        echo "Verilator is already installed."
+        info "Verilator is already installed."
     else
-        retry_run git clone ${GITEE_MIRROR}/Verilator.git /tmp/verilator
-        cd /tmp/verilator
-        git checkout stable
+        TMPDIR="$(mktemp -d)"
+        retry_run git clone --depth 1 -b stable ${GITEE_MIRROR}/Verilator.git "$TMPDIR"
+        cd $TMPDIR
         autoconf
         ./configure
         make -j$(nproc)
-        sudo make install
+        $SUDO make install
         cd -
-        rm -rf /tmp/verilator
+        rm -rf $TMPDIR
     fi
 
-    echo "Environment setup completed."
+    success "Environment setup completed."
 }
 
 setup_repo() {
-    # clone repo
-    retry_run git clone --depth 1 -b $1 ${GITHUB_YSYX_B_STAGE_CI_REPO} ysyx-workbench
+	if [ -d "ysyx-workbench" ]; then
+		error "Directory 'ysyx-workbench' already exists in $(pwd)."
+		info "If you want to re-clone, please remove or move this directory first."
+		exit 1
+	fi
+
+	# clone repo
+	retry_run git clone --depth 1 -b $1 ${GITHUB_YSYX_B_STAGE_CI_REPO} ysyx-workbench
     # create activate.sh
     echo "export B_EXAM_HOME=$(pwd)" > activate.sh
     echo "export YSYX_HOME=\$B_EXAM_HOME/ysyx-workbench" >> activate.sh
@@ -99,8 +169,7 @@ setup_repo() {
     # cd into workbench
     cd $YSYX_HOME
     # disable git tracer
-    echo ".git_commit:" >> Makefile
-    echo -e "\t@echo git tracer is disabled" >> Makefile
+    echo -e "\ndefine git_commit\n\t@echo git tracer is disabled\nendef" >> Makefile
     # clone other repos
     retry_run git clone --depth 1 https://github.com/NJU-ProjectN/am-kernels
     retry_run git clone --depth 1 https://github.com/NJU-ProjectN/rt-thread-am
@@ -123,31 +192,38 @@ setup_repo() {
     make -C $YSYX_HOME/rt-thread-am/bsp/abstract-machine init
     # clean up
     make -C $YSYX_HOME/nemu clean
-    make -C $YSYX_HOME/am-kernels clean-all
+    make -C $YSYX_HOME/am-kernels clean-all clean
     make -C $YSYX_HOME/npc clean
     # git clone ssh -> https
-    sed -i -e 's+git@github.com:+https://github.com/+' $YSYX_HOME/ysyxSoC/.gitmodules
-    sed -i -e 's+git@github.com:+https://github.com/+' $YSYX_HOME/nemu/tools/capstone/Makefile || true
-    sed -i -e 's+git@github.com:+https://github.com/+' $YSYX_HOME/nemu/tools/spike-diff/Makefile || true
+    sed -i -e "s+git@github.com:+https://github.com/+" $YSYX_HOME/ysyxSoC/.gitmodules
+    sed -i -e "s+git@github.com:+https://github.com/+" $YSYX_HOME/nemu/tools/capstone/Makefile || true
+    sed -i -e "s+git@github.com:+https://github.com/+" $YSYX_HOME/nemu/tools/spike-diff/Makefile || true
     # install mill
     mkdir -p $YSYX_HOME/../bin
     MILL_VERSION=0.11.13
     if [[ -e $YSYX_HOME/npc/.mill-version ]]; then
         MILL_VERSION=`cat $YSYX_HOME/npc/.mill-version`
     fi
-    echo "Downloading mill with version $MILL_VERSION"
-    retry_run sh -c "curl -L https://github.com/com-lihaoyi/mill/releases/download/$MILL_VERSION/$MILL_VERSION > $YSYX_HOME/../bin/mill"
+    info "Downloading mill with version $MILL_VERSION"
+    retry_run sh -c "curl -L ${GITHUB_MIRROR}https://github.com/com-lihaoyi/mill/releases/download/$MILL_VERSION/$MILL_VERSION > $YSYX_HOME/../bin/mill"
     chmod +x $YSYX_HOME/../bin/mill
     # generate verilog for ysyxSoC
     PATH=$YSYX_HOME/../bin:$PATH
     retry_run make -C $YSYX_HOME/ysyxSoC dev-init
     retry_run make -C $YSYX_HOME/ysyxSoC verilog
 
-    echo "Student repo setup completed, run 'source activate.sh' to activate the environment."
+    success "Student repo setup completed, run 'source activate.sh' to activate the environment."
 }
 
 clean_repo() {
     YSYX_HOME=$(pwd)/ysyx-workbench
+
+    # Use mutiple ways to clean just in case
+    make -C $YSYX_HOME/nemu clean
+    make -C $YSYX_HOME/am-kernels clean-all clean
+    make -C $YSYX_HOME/npc clean
+
+    pushd .
 
     cd $YSYX_HOME
     git clean -xdf
@@ -182,11 +258,51 @@ clean_repo() {
     cd $YSYX_HOME/riscv-arch-test-am
     git clean -xdf
     rm -rf ./.git
+
+    popd
+}
+
+pack_repo() {
+	YSYX_HOME=$(pwd)/ysyx-workbench
+    PLAIN_ARCHIVE="ysyx-workbench.tar.bz2"
+    ENCRYPTED_ARCHIVE="ysyx-b-exam.tar.bz2"
+
+	if [ ! -d "$YSYX_HOME" ]; then
+		error "Directory 'ysyx-workbench' not found in $(pwd). Aborting."
+		exit 1
+	fi
+
+	info "Running pre-pack clean targets..."
+	make -C "$YSYX_HOME/nemu" clean || true
+	make -C "$YSYX_HOME/am-kernels" clean-all clean || true
+	make -C "$YSYX_HOME/npc" clean || true
+
+	# Unencrypted archive. Including .git, for TA refrence
+	info "Creating plain archive: $PLAIN_ARCHIVE"
+    if [ ! -d "${YSYX_HOME}/.git" ]; then
+		error "Directory 'ysyx-workbench' does not contain .git. Aborting."
+		exit 1
+	fi
+	tar cjf "$PLAIN_ARCHIVE" ysyx-workbench
+
+	info "Running clean_repo to strip VCS metadata..."
+	clean_repo
+
+	KEY=$(base64 /dev/random | head -c 16)
+
+	info "Creating encrypted archive: $ENCRYPTED_ARCHIVE"
+	tar cj ysyx-workbench activate.sh bin | openssl aes256 -k "$KEY" > "$ENCRYPTED_ARCHIVE"
+
+	success "Pack completed."
+	info "Plain archive: $GREEN$PLAIN_ARCHIVE"
+	info "Encrypted archive: $GREEN$ENCRYPTED_ARCHIVE"
+	info "Encryption key: $RED$KEY"
+    echo $KEY > ysyx-b-exam-key.txt
 }
 
 if [ -z "$1" ]; then
-    echo "Error: No argument specified."
-    echo "Usage: $0 {env|repo|clean}"
+    error "Error: No argument specified."
+    info "Usage: $0 {env|repo|pack}"
     exit 1
 fi
 
@@ -195,14 +311,23 @@ case "$1" in
         setup_env
         ;;
     repo)
+        sanity_check
+        check_git_config
         setup_repo $2 
         ;;
-    clean)
-        clean_repo
+#    clean)
+#        sanity_check
+#        check_git_config
+#        clean_repo
+#        ;;
+    pack)
+        sanity_check
+        check_git_config
+        pack_repo
         ;;
     *)
-        echo "Error: Unknown argument '$1'."
-        echo "Usage: $0 {env|repo|clean}"
+        error "Error: Unknown argument '$1'."
+        info "Usage: $0 {env|repo|pack}"
         exit 1
         ;;
 esac
