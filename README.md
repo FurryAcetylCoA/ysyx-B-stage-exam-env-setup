@@ -56,8 +56,8 @@ source activate.sh
 setup.sh pack
 ```
 将生成两个压缩包:
-- `ysyx-workbench.tar.bz2`: 包含VCS记录，不加密。供存档。
-- 供留档使用；`ysyx-b-exam.tar.bz2`: 不包含VCS记录，使用随机产生的密钥加密，发给学员使用。
+- `学生学号-ysyx-workbench.tar.bz2`: 包含VCS记录，不加密。供存档。
+- 供留档使用；`学生学号-ysyx-b-exam.tar.bz2`: 不包含VCS记录，使用随机产生的密钥加密，发给学员使用。
 完成后，可将目录打包上传到系统中。
 加密密码会输出到屏幕上，同时，也会存储到`ysyx-b-exam-key.txt`中
 由于使用绝对路径，接收者需修改 `activate.sh` 中 `B_EXAM_HOME` 为解压后的目录。
