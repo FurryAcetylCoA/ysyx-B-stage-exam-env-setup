@@ -156,16 +156,63 @@ setup_repo() {
 
 	# clone repo
 	retry_run git clone --depth 1 -b $1 ${GITHUB_YSYX_B_STAGE_CI_REPO} ysyx-workbench
-    # create activate.sh
-    echo "export B_EXAM_HOME=$(pwd)" > activate.sh
-    echo "export YSYX_HOME=\$B_EXAM_HOME/ysyx-workbench" >> activate.sh
-    echo "export NEMU_HOME=\$YSYX_HOME/nemu" >> activate.sh
-    echo "export AM_HOME=\$YSYX_HOME/abstract-machine" >> activate.sh
-    echo "export NAVY_HOME=\$YSYX_HOME/navy-apps" >> activate.sh
-    echo "export NPC_HOME=\$YSYX_HOME/npc" >> activate.sh
-    echo "export NVBOARD_HOME=\$YSYX_HOME/nvboard" >> activate.sh
-    echo "export PATH=\$B_EXAM_HOME/bin:\$PATH" >> activate.sh
-    source activate.sh
+	# create activate.sh with unique exam session ID
+	local EXAM_SESSION_ID
+	EXAM_SESSION_ID=$(base64 /dev/random | head -c 16)
+	echo "EXAM_SESSION_ID='$EXAM_SESSION_ID'" > activate.sh
+	cat >> activate.sh <<'EOF'
+
+show_exam_notice() {
+    local enable_file="$B_EXAM_HOME/.exam_notice_enable"
+    local seen_file="$B_EXAM_HOME/.exam_notice_seen"
+    local expected_id="$EXAM_SESSION_ID"
+
+    if [ ! -f "$enable_file" ]; then
+        return
+    fi
+
+    if [ -f "$seen_file" ]; then
+        local stored_id
+        stored_id=$(cat "$seen_file" 2>/dev/null)
+        if [ "$stored_id" = "$expected_id" ]; then
+            return
+        fi
+    fi
+
+    local interactive=0
+    if [ -t 1 ] && [ -t 0 ]; then
+        interactive=1
+    fi
+
+    local -a blocks=(
+$'************************************************\n* 一生一芯 · 流片考核须知                      *\n************************************************\n\n欢迎参加本次流片考核。为确保考核顺利进行，请在开始编写代码前，\n仔细阅读并确认符合以下环境及操作要求：'
+$'\n\n[一、环境自检]\n1. 屏幕共享：请确认已共享【整个桌面】，且仅使用【单显示器】。\n2. 设备唯一：考核期间的操作行为仅限使用当前电脑。\n（注：第二台设备仅用于环境监控与录像，须提前设置好，考核期间不得以任何形式操作或查看该设备。）\n3. 通讯静默：除考核用飞书外，请关闭电脑微信、QQ等即时通讯软件；\n   严禁运行向日葵、ToDesk等远程工具。\n4. 音视频 ：全程开启摄像头（展示面部）与麦克风；\n   请使用外放音箱，请勿佩戴耳机。\n'
+$'[二、工具与AI规范]\n1. 插件禁用：请检查 IDE，确保 Copilot 等 AI 辅助插件已彻底关闭。\n2. 禁止Diff：严禁使用 diff/local history 对比注入 Bug 前后的代码。\n3. AI红线 ：允许联网查阅文档，但严禁使用 ChatGPT、Claude 等\n   对话式 AI，或通过 Cursor 等工具间接获取 AI 辅助。\n   * 注：轻微越界将给予警告，严重或多次违规将直接终止考核。\n'
+$'[三、异常与诚信]\n1. 网络稳定：若考核开始20分钟内掉线，可重新安排；\n   超过20分钟或连续两次掉线，将视为考核不通过，请确保网络通畅。\n2. 保密义务：考核题目属于保密内容，严禁泄露，违者取消流片资格。\n3. 禁止以任何形式对比注入 Bug 前后的代码。\n\n------------------------------------------------------------------------\n       请保持专注，诚信应考。预祝你发挥出最佳水平！\n************************************************************************\n'
+    )
+
+    for block in "${blocks[@]}"; do
+        printf "%s\n" "$block"
+        if [ "$interactive" -eq 1 ]; then
+            read -rp "按回车继续，Ctrl+C退出：" _ || true
+        fi
+    done
+
+    printf "%s" "$expected_id" > "$seen_file"
+}
+
+export B_EXAM_HOME=$(pwd)
+export YSYX_HOME=$B_EXAM_HOME/ysyx-workbench
+export NEMU_HOME=$YSYX_HOME/nemu
+export AM_HOME=$YSYX_HOME/abstract-machine
+export NAVY_HOME=$YSYX_HOME/navy-apps
+export NPC_HOME=$YSYX_HOME/npc
+export NVBOARD_HOME=$YSYX_HOME/nvboard
+export PATH=$B_EXAM_HOME/bin:$PATH
+
+show_exam_notice
+EOF
+	source activate.sh
     # cd into workbench
     cd $YSYX_HOME
     # disable git tracer
@@ -279,18 +326,22 @@ pack_repo() {
 		exit 1
 	fi
 
-	info "Running pre-pack clean targets..."
-	make -C "$YSYX_HOME/nemu" clean || true
-	make -C "$YSYX_HOME/am-kernels" clean-all clean || true
-	make -C "$YSYX_HOME/npc" clean || true
+    info "Running pre-pack clean targets..."
+    make -C "$YSYX_HOME/nemu" clean || true
+    make -C "$YSYX_HOME/am-kernels" clean-all clean || true
+    make -C "$YSYX_HOME/npc" clean || true
 
-	# Unencrypted archive. Including .git, for TA refrence
-	info "Creating plain archive: $PLAIN_ARCHIVE"
+    info "Enabling first-time exam notice for student package..."
+    : > ".exam_notice_enable"
+    rm -f ".exam_notice_seen"
+
+    # Unencrypted archive. Including .git, for TA refrence
+    info "Creating plain archive: $PLAIN_ARCHIVE"
     if [ ! -d "${YSYX_HOME}/.git" ]; then
-		error "Directory 'ysyx-workbench' does not contain .git. Aborting."
-		exit 1
-	fi
-	tar cjf "$PLAIN_ARCHIVE" ysyx-workbench
+        error "Directory 'ysyx-workbench' does not contain .git. Aborting."
+        exit 1
+    fi
+    tar cjf "$PLAIN_ARCHIVE" ysyx-workbench
 
 	info "Running clean_repo to strip VCS metadata..."
 	clean_repo
@@ -306,7 +357,7 @@ pack_repo() {
     fi
 
     info "Creating encrypted archive: $ENCRYPTED_ARCHIVE"
-    tar cj ysyx-workbench activate.sh bin | openssl aes256 -k "$KEY" > "$ENCRYPTED_ARCHIVE"
+    tar cj ysyx-workbench activate.sh bin .exam_notice_enable | openssl aes256 -k "$KEY" > "$ENCRYPTED_ARCHIVE"
 
     success "Pack completed."
     info "Plain archive: $GREEN$PLAIN_ARCHIVE"
@@ -338,6 +389,7 @@ unpack_repo() {
         ARCHIVE="${matches[0]}"
         info "Found archive: $ARCHIVE. Extracting..."
         tar xjf "$ARCHIVE"
+        rm -f .exam_notice_enable .exam_notice_seen
         success "Extraction completed."
 }
 
