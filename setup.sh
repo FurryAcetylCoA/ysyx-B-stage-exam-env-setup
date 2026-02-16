@@ -67,7 +67,7 @@ retry_run() {
 
 # Sanity check for required tools
 sanity_check() {
-    local -a cmds=(git wget curl gcc g++ gdb make autoconf scons python3 perl flex bison ccache javac riscv64-linux-gnu-gcc dtc)
+    local -a cmds=(git wget curl gcc g++ gdb make autoconf scons python3 perl flex bison ccache javac riscv64-linux-gnu-gcc dtc makeself)
     local missing=()
 
     for c in "${cmds[@]}"; do
@@ -126,7 +126,7 @@ setup_env() {
         gcc g++ gdb make build-essential autoconf scons \
         python-is-python3 help2man perl flex bison ccache \
         libreadline-dev libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev \
-        g++-riscv64-linux-gnu llvm llvm-dev device-tree-compiler
+        g++-riscv64-linux-gnu llvm llvm-dev device-tree-compiler makeself
     # fix compile error using riscv64-linux-gnu
     $SUDO sed -i 's|^# include <gnu/stubs-ilp32.h>|//# include <gnu/stubs-ilp32.h>|' /usr/riscv64-linux-gnu/include/gnu/stubs.h
     # install verilator
@@ -319,8 +319,8 @@ pack_repo() {
     # Get student ID (current branch) from the repo
     BRANCH_NAME_STUDENT_ID=$(git -C "$YSYX_HOME" branch --show-current)
 
-    PLAIN_ARCHIVE="${BRANCH_NAME_STUDENT_ID}-ysyx-workbench.tar.bz2"
-    ENCRYPTED_ARCHIVE="${BRANCH_NAME_STUDENT_ID}-ysyx-b-exam.tar.bz2"
+	PLAIN_ARCHIVE="${BRANCH_NAME_STUDENT_ID}-ysyx-workbench.run"
+	ENCRYPTED_ARCHIVE="${BRANCH_NAME_STUDENT_ID}-ysyx-b-exam.run"
 	if [ ! -d "$YSYX_HOME" ]; then
 		error "Directory 'ysyx-workbench' not found in $(pwd). Aborting."
 		exit 1
@@ -335,13 +335,18 @@ pack_repo() {
     : > ".exam_notice_enable"
     rm -f ".exam_notice_seen"
 
-    # Unencrypted archive. Including .git, for TA refrence
-    info "Creating plain archive: $PLAIN_ARCHIVE"
+	# Unencrypted archive. Including .git, for TA reference
+    info "Creating plain self-extracting archive: $PLAIN_ARCHIVE"
     if [ ! -d "${YSYX_HOME}/.git" ]; then
         error "Directory 'ysyx-workbench' does not contain .git. Aborting."
         exit 1
     fi
-    tar cjf "$PLAIN_ARCHIVE" ysyx-workbench
+    makeself --notemp --bzip2 --nox11 ysyx-workbench "$PLAIN_ARCHIVE" "YSYX Workbench ($BRANCH_NAME_STUDENT_ID)" echo "Extraction complete."
+
+    if [ ! -f "$(pwd)/${PLAIN_ARCHIVE}" ]; then
+        error Failed to create ${PLAIN_ARCHIVE}. Check for any error above
+        exit 1
+    fi
 
 	info "Running clean_repo to strip VCS metadata..."
 	clean_repo
@@ -356,8 +361,21 @@ pack_repo() {
         printf "%s" "$KEY" > ysyx-b-exam-key.txt
     fi
 
-    info "Creating encrypted archive: $ENCRYPTED_ARCHIVE"
-    tar cj ysyx-workbench activate.sh bin .exam_notice_enable | openssl aes256 -k "$KEY" > "$ENCRYPTED_ARCHIVE"
+    info "Creating encrypted self-extracting archive: $ENCRYPTED_ARCHIVE"
+    # Prepare files for encrypted archive
+    PACK_DIR=$(mktemp -d)
+    cp -r ysyx-workbench "$PACK_DIR/"
+    cp activate.sh "$PACK_DIR/"
+    cp -r bin "$PACK_DIR/"
+    cp .exam_notice_enable "$PACK_DIR/"
+    # must --target . since this one is inside a tmp folder
+    makeself --notemp --target . --bzip2 --nox11 --ssl-encrypt --ssl-passwd "$KEY" "$PACK_DIR" "$ENCRYPTED_ARCHIVE" "YSYX B Exam ($BRANCH_NAME_STUDENT_ID)" echo "Extraction complete."
+    rm -rf "$PACK_DIR"
+
+    if [ ! -f "$(pwd)/${ENCRYPTED_ARCHIVE}" ]; then
+        error Failed to create ${ENCRYPTED_ARCHIVE}. Check for any error above
+        exit 1
+    fi
 
     success "Pack completed."
     info "Plain archive: $GREEN$PLAIN_ARCHIVE"
@@ -367,18 +385,18 @@ pack_repo() {
 
 # Unpack a non-encrypted student archive to the current directory.
 unpack_repo() {
-        # The script expects exactly one file matching '*-ysyx-workbench.tar.bz2'.
+        # The script expects exactly one file matching '*-ysyx-workbench.run'.
         shopt -s nullglob
-        matches=( *-ysyx-workbench.tar.bz2 )
+        matches=( *-ysyx-workbench.run )
         shopt -u nullglob
 
         if [ ${#matches[@]} -eq 0 ]; then
-            error "No '*-ysyx-workbench.tar.bz2' archive found in $(pwd)."
+            error "No '*-ysyx-workbench.run' self-extracting archive found in $(pwd)."
             exit 1
         fi
 
         if [ ${#matches[@]} -gt 1 ]; then
-            error "Multiple '*-ysyx-workbench.tar.bz2' archives found in $(pwd):"
+            error "Multiple '*-ysyx-workbench.run' archives found in $(pwd):"
             for f in "${matches[@]}"; do
                 info "  - $f"
             done
@@ -388,7 +406,8 @@ unpack_repo() {
 
         ARCHIVE="${matches[0]}"
         info "Found archive: $ARCHIVE. Extracting..."
-        tar xjf "$ARCHIVE"
+        chmod +x "$ARCHIVE"
+        ./"$ARCHIVE"
         rm -f .exam_notice_enable .exam_notice_seen
         success "Extraction completed."
 }
@@ -418,7 +437,7 @@ case "$1" in
         ;;
     *)
         error "Error: Unknown argument '$1'."
-        info "Usage: $0 {env|repo|pack}"
+        info "Usage: $0 {env|repo|pack|unpack}"
         exit 1
         ;;
 esac
